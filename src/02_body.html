@@ -1,0 +1,46 @@
+<body>
+<div id="app">
+  <!-- Top app bar -->
+  <div class="appbar">
+    <div class="title"><span class="dot"></span>Excel</div>
+    <button class="iconbtn" data-act="new" title="Buku baru"><svg class="ico" width="22" height="22" viewBox="0 -960 960 960"><use href="#i-new"/></svg></button>
+    <button class="iconbtn" data-act="open" title="Buka file .xlsx"><svg class="ico" width="22" height="22" viewBox="0 -960 960 960"><use href="#i-open"/></svg></button>
+    <button class="iconbtn" data-act="save" title="Simpan / unduh"><svg class="ico" width="22" height="22" viewBox="0 -960 960 960"><use href="#i-save"/></svg></button>
+    <span class="badge" id="fname">Buku tanpa judul</span>
+    <span class="spacer"></span>
+    <span class="badge" id="dirty" style="display:none;color:var(--err)">●</span>
+    <button class="iconbtn" data-act="theme" title="Mode gelap/terang"><svg class="ico" width="22" height="22" viewBox="0 -960 960 960"><use href="#i-theme"/></svg></button>
+  </div>
+  <!-- Formula bar -->
+  <div class="fbar">
+    <input class="refbox" id="refbox" readonly value="A1">
+    <input class="finput" id="finput" placeholder="Ketik = untuk formula, contoh =SUM(A1:A5)">
+  </div>
+  <!-- Grid -->
+  <div class="gridwrap" id="gridwrap"><table class="grid" id="grid"></table></div>
+  <!-- Status bar -->
+  <div class="sbar"><span>Sel <b id="cur">-</b></span><span id="suminfo"></span></div>
+</div>
+
+<!-- Confirm dialog -->
+<div class="overlay" id="ovConfirm">
+  <div class="dialog">
+    <h3 id="cfTitle">Konfirmasi</h3>
+    <p id="cfBody"></p>
+    <div class="actions">
+      <button data-cf="no" id="cfNo">Batal</button>
+      <button data-cf="yes" class="primary" id="cfYes">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<div id="snack"></div>
+<input type="file" id="file" accept=".xlsx,.xls,.csv">
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-new" viewBox="0 -960 960 960"><path d="M180-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h405l195 195v35h-60v-20H570v-180H180v630h600v-120h60v120q0 24-18 42t-42 18H180Zm540-447 48-50-58-58 3-3 44-44 9 9 16-16 58 58-50 48-44-44-9 9-48 50-56 0v-60h60l-60 60Z"/></symbol>
+  <symbol id="i-open" viewBox="0 -960 960 960"><path d="M180-160q-24 0-42-18t-18-42v-120h60v120h600v-600H180v120h-60v-120q0-24 18-42t42-18h600q24 0 42 18t18 42v600q0 24-18 42t-42 18H180Zm242-220-42-42 96-96H80v-60h396l-96-96 42-42 168 168-168 168Z"/></symbol>
+  <symbol id="i-save" viewBox="0 -960 960 960"><path d="M840-660v480q0 24-18 42t-42 18H180q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h480l240 240Zm-60 34L626-780H180v600h600v-446ZM480-250q42 0 71-29t29-71q0-42-29-71t-71-29q-42 0-71 29t-29 71q0 42 29 71t71 29ZM240-720h360v140H240v-140Zm-60 340v260h600v-260H180h600v260H180v-260Z"/></symbol>
+  <symbol id="i-theme" viewBox="0 -960 960 960"><path d="M480-114q117 0 198.5-81.5T760-394q0-116-67-204.5T510-686q-51-6-91-36t-60-81q71-8 129-31t97-65q-2-2-20-20-8-8-19-8t-19 8l-8 8q-54 54-136 54t-136-54l-8-8q-8-8-19-8t-19 8q-10 10-19 19t-8 17q0 8 9 16 60 61 74 153-2 44-16 82t-40 66q-28 31-63 51t-79 26q-12 1-20 9t-8 19q0 11 8 19t19 8h7q100 25 171 105t71 185Z"/></symbol>
+</svg>
+

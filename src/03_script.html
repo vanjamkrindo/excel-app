@@ -1,0 +1,116 @@
+<script id="xlsx-src">--XLSX--</script>
+<script>
+'use strict';
+/* ============ State & data model ============ */
+const COL_COUNT = 26, ROWH = 26;
+const $ = s => document.querySelector(s);
+const cells = {};            // "r,c" -> {v, f}  (v=display value, f=formula|null)
+const dirtyEl = $('#dirty'), fnameEl = $('#fname');
+let fileName = 'Buku tanpa judul';
+let isDirty = false;
+let curR = 0, curC = 0;
+let usedMaxRow = 0, usedMaxCol = 0;
+const colName = i => { let s=''; i++; while(i>0){ const m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=Math.floor((i-1)/26);} return s; };
+const colIdx = n => { let v=0; for(const ch of n.toUpperCase()) v = v*26 + (ch.charCodeAt(0)-64); return v-1; };
+const addr = (r,c)=>colName(c)+ (r+1);
+const key = (r,c)=> r+','+c;
+
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+/* ============ Formula engine ============ */
+function cellNum(r,c){
+  const cell = cells[key(r,c)];
+  if(!cell) return NaN;
+  if(typeof cell.v === 'number') return cell.v;
+  const n = parseFloat(String(cell.v).replace(/[,\s]/g,''));
+  return isNaN(n) ? NaN : n;
+}
+function refToVal(ref){ // "A1" -> [r,c]
+  const m = /^([A-Z]+)(\d+)$/.exec(ref.trim().toUpperCase());
+  if(!m) return null;
+  const r = parseInt(m[2],10)-1, c = colIdx(m[1]);
+  if(r<0||c<0||c>=COL_COUNT) return null;
+  return {r,c};
+}
+function rangeRefs(a,b){
+  const r1=refToVal(a), r2=refToVal(b); if(!r1||!r2) return [];
+  const out=[];
+  for(let r=Math.min(r1.r,r2.r); r<=Math.max(r1.r,r2.r); r++)
+    for(let c=Math.min(r1.c,r2.c); c<=Math.max(r1.c,r2.c); c++)
+      out.push({r,c});
+  return out;
+}
+const FN = {
+  SUM:  a => a.reduce((s,v)=>s+(isNaN(v)?0:v),0),
+  AVERAGE: a => { const n=a.filter(x=>!isNaN(x)); return n.length? n.reduce((s,v)=>s+v,0)/n.length : NaN; },
+  MIN:  a => Math.min(...a.filter(x=>!isNaN(x))),
+  MAX:  a => Math.max(...a.filter(x=>!isNaN(x))),
+  COUNT: a => a.filter(x=>!isNaN(x)).length,
+  ABS:  a => Math.abs(a[0]||0),
+  ROUND: a => Math.round(a[0]||0),
+  SQRT: a => Math.sqrt(a[0]||0)
+};
+function evalFormula(formula){
+  // tokenize
+  const tokens=[]; const s=formula.replace(/\s+/g,'').toUpperCase();
+  let i=0;
+  while(i<s.length){
+    const ch=s[i];
+    if(/[0-9.]/.test(ch)){ let j=i; while(j<s.length&&/[0-9.]/.test(s[j])) j++; tokens.push({t:'num',v:parseFloat(s.slice(i,j))}); i=j; continue; }
+    if(/[A-Z]/.test(ch)){ let j=i; while(j<s.length&&/[A-Z0-9:]/.test(s[j])) j++; tokens.push({t:'name',v:s.slice(i,j)}); i=j; continue; }
+    if('+-*/^(),'.includes(ch)){ tokens.push({t:ch,v:ch}); i++; continue; }
+    i++;
+  }
+  let p=0;
+  // each name could be ref, range, or function followed by (
+  let depth=0;
+  function parseExpr(){ return parseAdd(); }
+  function parseAdd(){ let x=parseMul(); while(p<tokens.length&&(tokens[p].v==='+'||tokens[p].v==='-')){ const op=tokens[p++].v, y=parseMul(); x= op==='+'? x+y : x-y; } return x; }
+  function parseMul(){ let x=parseUnary(); while(p<tokens.length&&(tokens[p].v==='*'||tokens[p].v==='/')){ const op=tokens[p++].v, y=parseUnary(); x= op==='*'? x*y : (y===0? NaN : x/y); } return x; }
+  function parseUnary(){ if(p<tokens.length&&tokens[p].v==='-'){ p++; return -parseUnary(); } return parsePower(); }
+  function parsePower(){ let x=parsePrimary(); if(p<tokens.length&&tokens[p].v==='^'){ p++; const y=parseUnary(); return Math.pow(x,y);} return x; }
+  function parsePrimary(){
+    const tk=tokens[p];
+    if(!tk) return NaN;
+    if(tk.t==='num'){ p++; return tk.v; }
+    if(tk.t==='name'){
+      const name=tk.v; p++;
+      if(p<tokens.length && tokens[p].v==='('){
+        // function call
+        p++; const args=[];
+        if(tokens[p] && tokens[p].v===')'){ p++; }
+        else {
+          while(true){
+            args.push(parseExpr());
+            if(p>=tokens.length) break;
+            if(tokens[p].v===','){ p++; continue; }
+            if(tokens[p].v===')'){ p++; break; }
+            break;
+          }
+        }
+        const fn=FN[name]; if(!fn) return NaN;
+        const flat=[];
+        for(const a of args){ if(Array.isArray(a)) for(const x of a) flat.push(x); else flat.push(a); }
+        return fn(flat);
+      }
+      // ref or range
+      if(p<tokens.length && tokens[p].v===':'){
+        p++; const b=tokens[p]; p++;
+        const refs=rangeRefs(name, b?v.v:name);
+        return [refs.map(c=>cellNum(c.r,c.c)).filter(x=>!NaN)];
+      }
+      // single range name already like A1:B2
+      if(name.includes(':')){
+        const [a,b]=name.split(':'); const refs=rangeRefs(a,b);
+        return refs.map(c=>cellNum(c.r,c.c)).filter(x=>!isNaN(x));
+      }
+      const r=refToVal(name); if(!r) return NaN;
+      return cellNum(r.r,r.c);
+    }
+    if(tk.v==='('){ p++; const x=parseExpr(); if(tokens[p]&&tokens[p].v===')')p++; return x; }
+    p++; return NaN;
+  }
+  const val=parseExpr();
+  return isNaN(val) ? '#ERROR' : val;
+}
+</script>

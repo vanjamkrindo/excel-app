@@ -1,0 +1,145 @@
+<script>
+'use strict';
+/* ============ Grid render (row-virtualized) ============ */
+const gridEl = $('#grid'), wrapEl = $('#gridwrap');
+const VISIBLE_BUF = 6;
+let firstVisRow = 0, lastVisRow = 0, renderSeq = 0;
+
+function totalRows(){ return Math.max(usedMaxRow + 8, 60); }
+
+function buildHeader(){
+  let h = '<thead><tr><th class="corner"></th>';
+  for(let c=0;c<COL_COUNT;c++) h += `<th class="col" data-col="${c}">${colName(c)}</th>`;
+  h += '</tr></thead>';
+  return h;
+}
+
+function renderGrid(){
+  const st = wrapEl.scrollTop, vh = wrapEl.clientHeight;
+  const total = totalRows();
+  let f = Math.max(0, Math.floor(st / ROWH) - VISIBLE_BUF);
+  let l = Math.min(total - 1, f + Math.ceil(vh / ROWH) + VISIBLE_BUF*2);
+  if(l < f) l = f;
+  const sameWin = (f===firstVisRow && l===lastVisRow && gridEl.dataset.built==='1' && +gridEl.dataset.total===total);
+  if(sameWin) return;
+  firstVisRow=f; lastVisRow=l;
+  const totalH = total*ROWH;
+  let html = buildHeader();
+  html += '<tbody>';
+  // top spacer row
+  if(f>0) html += `<tr style="height:${f*ROWH}px"><td colspan="${COL_COUNT+1}" style="border:none;background:transparent;padding:0"></td></tr>`;
+  for(let r=f; r<=l; r++){
+    html += `<tr><th class="rowh" data-row="${r}">${r+1}</th>`;
+    for(let c=0;c<COL_COUNT;c++){
+      const cell = cells[key(r,c)];
+      const v = cell ? cell.v : '';
+      const isNum = typeof v==='number';
+      const sel = (r===curR && c===curC) ? ' class="selected'+(isNum?' num':' num')+'"' : (isNum?' class="num"':'');
+      html += `<td data-r="${r}" data-c="${c}"${isNum?' class="num"':''}${(r===curR&&c===curC)?' data-sel="1"':''}>${esc(cell?(cell.f!==null&&cell.f!==undefined?cell.v:v):'')}</td>`;
+    }
+    html += '</tr>';
+  }
+  if(l < total-1){
+    const rowsLeft = total-1-l;
+    html += `<tr style="height:${rowsLeft*ROWH}px"><td colspan="${COL_COUNT+1}" style="padding:0"></td></tr>`;
+  }
+  html += '</tbody>';
+  gridEl.innerHTML = html;
+  gridEl.dataset.built='1'; gridEl.dataset.total=total;
+  applySelection();
+}
+
+wrapEl.addEventListener('scroll', ()=>{ requestAnimationFrame(renderGrid); });
+
+function applySelection(){
+  gridEl.querySelectorAll('td[data-sel]').forEach(td=>td.classList.remove('selected'));
+  const td = gridEl.querySelector(`td[data-r="${curR}"][data-c="${curC}"]`);
+  if(td){ td.classList.add('selected'); td.dataset.sel='1'; }
+  $('#refbox').value = addr(curR,curC);
+  $('#cur').textContent = addr(curR,curC);
+  const cell = cells[key(curR,curC)];
+  $('#finput').value = cell ? (cell.f!==null&&cell.f!==undefined ? '='+cell.f : String(cell.v??'')) : '';
+}
+
+function updateSumInfo(){
+  let n=0, sum=0, cnt=0;
+  for(const k in cells){ const [r,c]=k.split(',').map(Number); if(r===curR){ const v=cells[k].v; if(typeof v==='number'){n++;sum+=v;} else if(!isNaN(parseFloat(v))){n++;sum+=parseFloat(v);} } }
+  $('#suminfo').textContent = n? `Rata-rata: ${(sum/n).toLocaleString('id-ID')}  |  Jumlah: ${sum.toLocaleString('id-ID')}  |  N: ${n}` : '';
+}
+
+/* ============ Editing ============ */
+function setCell(r,c,v,f){
+  const k=key(r,c);
+  if(v===''||v===null){ delete cells[k]; }
+  else if(typeof v==='string' && v.startsWith('=')){
+    const fn = v.slice(1); cells[k]={ v: evalFormula(fn), f: fn };
+  }
+  else cells[k]={ v, f: f===undefined?null:f };
+  if(v!==null&&v!==undefined&&v!==''){ usedMaxRow=Math.max(usedMaxRow,r); usedMaxCol=Math.max(usedMaxCol,c); }
+  markDirty();
+}
+function commitEdit(inputVal){
+  const raw = String(input ?? '');
+  const k = key(curR,curC);
+  if(raw.startsWith('=')){
+    const f = raw.slice(1);
+    const res = evalFormula(f);
+    cells[k] = { v: res, f };
+  } else {
+    const num = parseFloat(raw.replace(/\s/g,''));
+    if(raw.trim()!=='' && !isNaN(num) && /^-?\d+([.,]\d+)?([eE][+-]?\d+)?$/.test(raw.trim()))
+      cells[k]={ v: num, f: null };
+    else if(raw.trim()==='') delete cells[k];
+    else cells[k]={ v: raw, f: null };
+  }
+  recalcDependents();
+  markDirty();
+  renderGrid();
+  updateSumInfo();
+}
+/* recompute all formula cells after a change */
+function recalcAll(){
+  for(const k in cells){
+    const cell=cells[k];
+    if(cell.f!==null&&cell.f!==undefined){
+      const res=evalFormula(cell.f);
+      cell.v = res;
+    }
+  }
+}
+function recalcDependents(){ recalcAll(); }
+
+function markDirty(){ isDirty=true; dirtyEl.style.display='inline'; }
+function clearDirty(){ isDirty=false; dirtyEl.style.display='none'; }
+
+/* edit current cell inline via formula bar */
+$('#finput').addEventListener('keydown', e=>{
+  if(e.key==='Enter'){ commitEdit(e.target.value); e.target.blur(); moveSel(1,0); }
+  if(e.key==='Escape'){ e.target.value = displayFormula(curR,curC); e.target.blur(); }
+});
+function displayFormula(r,c){ const cell=cells[key(r,c)]; if(!cell) return ''; return cell.f!==null&&cell.f!==undefined ? '='+cell.f : String(cell.v??''); }
+
+function moveSel(dr,dc){
+  curR=Math.max(0,curR+dr); curC=Math.min(COL_COUNT-1,Math.max(0,curC+dc));
+  applySelection(); ensureVisible();
+}
+function ensureVisible(){
+  const td = gridEl.querySelector(`td[data-r="${curR}"][data-c="${curC}"]`);
+  if(td) td.scrollIntoView({block:'nearest',inline:'nearest'});
+}
+
+/* cell click to select + dblclick to edit in place */
+gridEl.addEventListener('click', e=>{
+  const td = e.target.closest('td');
+  if(!td || td.tagName!=='TD') return;
+  curR = +td.dataset.r; curC = +td.dataset.c;
+  applySelection(); updateSumInfo();
+  $('#finput').value = displayFormula(curR,curC);
+  $('#finput').focus(); $('#finput').select();
+});
+gridEl.addEventListener('dblclick', e=>{
+  const td = e.target.closest('td'); if(!td) return;
+  curR=+td.dataset.r; curC=+td.dataset.c; applySelection();
+  $('#finput').value = displayFormula(curR,curC); $('#finput').focus();
+});
+</script>

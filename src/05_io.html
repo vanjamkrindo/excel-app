@@ -1,0 +1,107 @@
+<script>
+'use strict';
+/* ============ Open xlsx ============ */
+function applyFile(wb){
+  clearSeries();
+  usedMaxRow=0; usedMaxCol=0;
+  for(const w of wb.SheetNames){
+    const ws=wb.Sheets[w]; if(!ws) continue;
+    const ref=ws['!ref']||'A1'; const rg=XLSX.utils.decode_range(ref);
+    for(let r=rg.s.r; r<=rg.e.r; r++) for(let c=rg.s.c; c<=rg.e.c; c++){
+      const cell=ws[XLSX.utils.encode_cell({r,c})]; if(!cell) continue;
+      let v = cell.v;
+      if(cell.t==='n' && typeof v==='number') v = Math.round(v*1e8)/1e8;
+      const k=key(r,c);
+      cells[k]={ v: v, f: cell.f||null };
+      usedMaxRow=Math.max(usedMaxRow,r); usedMaxCol=Math.max(usedMaxCol,c);
+    }
+    break; // sheet pertama saja
+  }
+  recalcAll();
+  renderGrid();
+  updateSumInfo();
+}
+function clearSeries(){ for(const k in cells) delete cells[k]; }
+
+/* ============ messages ============ */
+let snackTimer=null;
+function snack(msg){ const s=$('#snack'); s.textContent=msg; s.classList.add('show'); clearTimeout(snackTimer); snackTimer=setTimeout(()=>s.classList.remove('show'),2600); }
+function confirmDialog(title,body,yesLabel){ return new Promise(res=>{ $('#cfTitle').textContent=title; $('#cfBody').innerHTML=body; $('#cfYes').textContent=yesLabel||'Lanjut'; $('#cfNo').textContent='Batal'; $('#ovConfirm').classList.add('open'); window.__cfResolve=res; }); }
+$('#cfYes').addEventListener('click',()=>{ $('#ovConfirm').classList.remove('open'); window.__cfResolve && window.__cfResolve(true); });
+$('#cfNo').addEventListener('click',()=>{ $('#ovConfirm').classList.remove('open'); window.__cfResolve && window.__cfResolve(false); });
+$('#ovConfirm').addEventListener('click',e=>{ if(e.target===e.currentTarget){ $('#ovConfirm').classList.remove('open'); window.__cfResolve && window.__cfResolve(false);} });
+
+/* open file */
+$('#file').addEventListener('change', async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf,{type:'array'});
+  applyFile(wb);
+  fileName = file.name.replace(/\.[^.]+$/,'');
+  fnameEl.textContent = fileName; clearDirty();
+  snack('File dibuka: '+file.name);
+});
+$('[data-act="open"]').addEventListener('click', ()=>$('#file').click());
+
+/* ============ Save / download ============ */
+function buildWorkbook(){
+  const aoa=[];
+  const maxR=usedMaxRow, maxC=usedMaxCol;
+  for(let r=0;r<=maxR;r++){ const row=[]; for(let c=0;c<=maxC;c++){ const cell=cells[key(r,c)]; if(!cell){row.push(null); continue;} row.push({t: typeof cell.v==='number'?'n':'s', v: (cell.f!==null&&cell.f!==undefined?cell.v:cell.v), f: cell.f||undefined}); } aoa.push(row); }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Sheet1');
+  return XLSX.write(wb,{bookType:'xlsx',type:'array'});
+}
+function download(){
+  const arr = buildWorkbook();
+  const blob = new Blob([arr],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(fileName||'Buku')+'.xlsx'; document.body.appendChild(a); a.click(); URL.revokeObjectURL(a.href);
+  snack('Tersimpan.');
+}
+$('[data-act="save"]').addEventListener('click', ()=>download());
+
+/* new */
+async function newFile(){
+  if(isDirty){ const ok=await confirmDialog('Buat buku baru?','Perubahan yang belum disimpan akan hilang. Lanjut buat buku baru?','Buat baru'); if(!ok) return; }
+  clearSeries(); usedMaxRow=0; usedMaxCol=0; fileName='Buku tanpa judul'; fnameEl.textContent=fileName;
+  clearDirty(); renderGrid(); updateSumInfo(); snack('Buku baru dibuat.');
+}
+$('[data-act="new"]').addEventListener('click', newFile);
+
+/* theme */
+function applyTheme(){ document.documentElement.dataset.theme = (localStorage.getItem('excel-theme')||'light'); }
+function toggleTheme(){ const cur=document.documentElement.dataset.theme; const nx=cur==='dark'?'light':'dark'; document.documentElement.dataset.theme=nx; localStorage.setItem('excel-theme',nx); }
+$('[data-act="theme"]').addEventListener('click', toggleTheme);
+
+/* ripple */
+document.addEventListener('pointerdown', e=>{
+  const t=e.target.closest('.iconbtn,.pillbtn,.dialog .actions button'); if(!t) return;
+  const r=t.getBoundingClientRect(), d=Math.max(r.width,r.height)*2.2;
+  const s=document.createElement('span'); s.className='ripple';
+  s.style.cssText=`width:${d}px;height:${d}px;left:${e.clientX-r.left-d/2}px;top:${e.clientY-r.top-d/2}px`;
+  t.appendChild(s); setTimeout(()=>s.remove(),560);
+});
+
+/* keyboard: click cell then type goes to formula bar (Excell-like: direct cell entry) */
+document.addEventListener('keydown', e=>{
+  if(e.target.id==='finput') return;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
+    const map={ArrowUp:[-1,0],ArrowDown:[1,0],ArrowLeft:[0,-1],ArrowRight:[0,1]};
+    const [dr,dc]=map[e.key]; moveSel(dr,dc); e.preventDefault();
+  } else if(e.key==='Enter'){ commitEditFromBar(); moveSel(1,0); }
+  else if(e.key==='Delete'||e.key==='Backspace'){ delete cells[key(curR,curC)]; recalcDependents(); markDirty(); renderGrid(); updateSumInfo(); rebuildAllRefs(); }
+  else if(e.key.length===1 && !e.ctrlKey && !e.metaKey){ $('#finput').value=''; $('#finput').focus(); }
+});
+function commitEditFromBar(){ const v=$('#finput').value; commitEdit(v); }
+function rebuildAllRefs(){ recalcAll(); }
+
+/* initial */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+applyTheme();
+renderGrid();
+updateSumInfo();
+window.__app = { cells, setCell, download, buildWorkbook, recalcAll, evalFormula, renderGrid, get width(){return COL_COUNT}, get usedMaxRow(){return usedMaxRow} };
+</script>
